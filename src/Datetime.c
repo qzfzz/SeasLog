@@ -14,11 +14,36 @@
   +----------------------------------------------------------------------+
 */
 
+static void initRemoteTimeout(TSRMLS_D)
+{
+#ifndef PHP_WIN32
+	time_t conv;
+#else
+	long conv;
+#endif
+	struct timeval tv;
+
+#ifndef PHP_WIN32
+    conv = (time_t) (SEASLOG_G(remote_timeout) * 1000000.0);
+    tv.tv_sec = conv / 1000000;
+#else
+    conv = (long) (SEASLOG_G(remote_timeout) * 1000000.0);
+    tv.tv_sec = conv / 1000000;
+#endif
+    tv.tv_usec = conv % 1000000;
+
+    SEASLOG_G(remote_timeout_real) = tv;
+}
+
 static char *seaslog_process_last_sec(int now, int if_first TSRMLS_DC)
 {
     if (SEASLOG_INIT_FIRST_YES == if_first)
     {
         SEASLOG_G(last_sec) = ecalloc(sizeof(last_sec_entry_t), 1);
+    }
+    else
+    {
+        efree(SEASLOG_G(last_sec)->real_time);
     }
 
     SEASLOG_G(last_sec)->sec = now;
@@ -32,6 +57,10 @@ static char *seaslog_process_last_min(int now, int if_first TSRMLS_DC)
     if (SEASLOG_INIT_FIRST_YES == if_first)
     {
         SEASLOG_G(last_min) = ecalloc(sizeof(last_min_entry_t), 1);
+    }
+    else
+    {
+        efree(SEASLOG_G(last_min)->real_time);
     }
 
     SEASLOG_G(last_min)->sec = now;
@@ -69,7 +98,6 @@ static char *make_real_date(TSRMLS_D)
     int now = (long)time(NULL);
     if (now > SEASLOG_G(last_min)->sec + 60)
     {
-        efree(SEASLOG_G(last_min)->real_time);
         return seaslog_process_last_min(now, SEASLOG_INIT_FIRST_NO TSRMLS_CC);
     }
 
@@ -81,7 +109,6 @@ static char *make_real_time(TSRMLS_D)
     int now = (long)time(NULL);
     if (now > SEASLOG_G(last_sec)->sec)
     {
-        efree(SEASLOG_G(last_sec)->real_time);
         return seaslog_process_last_sec(now, SEASLOG_INIT_FIRST_NO TSRMLS_CC);
     }
 
@@ -107,3 +134,9 @@ static char *make_time_RFC3339(TSRMLS_D)
     int now = (long)time(NULL);
     return seaslog_format_date("Y-m-d\\TH:i:sP", 14, now TSRMLS_CC);
 }
+
+static struct timeval seaslog_get_remote_timeout(TSRMLS_D)
+{
+    return SEASLOG_G(remote_timeout_real);
+}
+

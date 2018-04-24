@@ -130,13 +130,26 @@ static int seaslog_init_request_variable(TSRMLS_D)
 {
     zval *client_ip;
     zval *domain;
+    zval *request_uri;
+    zval *request_method;
 
     SEASLOG_G(request_variable) = ecalloc(sizeof(request_variable_t), 1);
 
-    if (!strncmp(sapi_module.name, "cli", sizeof("cli") - 1))
+    if (!strncmp(sapi_module.name, SEASLOG_CLI_KEY, sizeof(SEASLOG_CLI_KEY) - 1) || !strncmp(sapi_module.name, SEASLOG_PHPDBG_KEY, sizeof(SEASLOG_PHPDBG_KEY) - 1))
     {
-        SEASLOG_G(request_variable)->request_uri = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("SCRIPT_NAME") TSRMLS_CC);
-        SEASLOG_G(request_variable)->request_method = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("SHELL") TSRMLS_CC);
+        request_uri = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("SCRIPT_NAME") TSRMLS_CC);
+        if (request_uri != NULL && IS_STRING == Z_TYPE_P(request_uri))
+        {
+            SEASLOG_G(request_variable)->request_uri_len = spprintf(&SEASLOG_G(request_variable)->request_uri, 0, "%s", Z_STRVAL_P(request_uri));
+            SEASLOG_ZVAL_PTR_DTOR(request_uri);
+        }
+
+        request_method = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("SHELL") TSRMLS_CC);
+        if (request_method != NULL && IS_STRING == Z_TYPE_P(request_method))
+        {
+            SEASLOG_G(request_variable)->request_method_len = spprintf(&SEASLOG_G(request_variable)->request_method, 0, "%s", Z_STRVAL_P(request_method));
+            SEASLOG_ZVAL_PTR_DTOR(request_method);
+        }
 
         SEASLOG_G(request_variable)->domain_port_len = spprintf(&SEASLOG_G(request_variable)->domain_port, 0, "cli");
         SEASLOG_G(request_variable)->client_ip_len = spprintf(&SEASLOG_G(request_variable)->client_ip, 0, "local");
@@ -148,14 +161,28 @@ static int seaslog_init_request_variable(TSRMLS_D)
     else
     {
         domain = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("HTTP_HOST") TSRMLS_CC);
-        SEASLOG_G(request_variable)->domain_port_len = spprintf(&SEASLOG_G(request_variable)->domain_port, 0, "%s", Z_STRVAL_P(domain));
-        SEASLOG_ZVAL_PTR_DTOR(domain);
+        if (domain != NULL && IS_STRING == Z_TYPE_P(domain))
+        {
+            SEASLOG_G(request_variable)->domain_port_len = spprintf(&SEASLOG_G(request_variable)->domain_port, 0, "%s", Z_STRVAL_P(domain));
+            SEASLOG_ZVAL_PTR_DTOR(domain);
+        }
 
-        SEASLOG_G(request_variable)->request_uri = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("REQUEST_URI") TSRMLS_CC);
-        SEASLOG_G(request_variable)->request_method = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("REQUEST_METHOD") TSRMLS_CC);
+        request_uri = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("REQUEST_URI") TSRMLS_CC);
+        if (request_uri != NULL && IS_STRING == Z_TYPE_P(request_uri))
+        {
+            SEASLOG_G(request_variable)->request_uri_len = spprintf(&SEASLOG_G(request_variable)->request_uri, 0, "%s", Z_STRVAL_P(request_uri));
+            SEASLOG_ZVAL_PTR_DTOR(request_uri);
+        }
+
+        request_method = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("REQUEST_METHOD") TSRMLS_CC);
+        if (request_method != NULL && IS_STRING == Z_TYPE_P(request_method))
+        {
+            SEASLOG_G(request_variable)->request_method_len = spprintf(&SEASLOG_G(request_variable)->request_method, 0, "%s", Z_STRVAL_P(request_method));
+            SEASLOG_ZVAL_PTR_DTOR(request_method);
+        }
 
         client_ip = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("HTTP_X_REAL_IP") TSRMLS_CC);
-        if (client_ip != NULL && Z_TYPE_P(client_ip) == IS_STRING)
+        if (client_ip != NULL && IS_STRING == Z_TYPE_P(client_ip))
         {
             SEASLOG_G(request_variable)->client_ip_len = spprintf(&SEASLOG_G(request_variable)->client_ip, 0, "%s", Z_STRVAL_P(client_ip));
             SEASLOG_ZVAL_PTR_DTOR(client_ip);
@@ -163,7 +190,7 @@ static int seaslog_init_request_variable(TSRMLS_D)
         }
 
         client_ip = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("HTTP_X_FORWARDED_FOR") TSRMLS_CC);
-        if (client_ip != NULL && Z_TYPE_P(client_ip) == IS_STRING)
+        if (client_ip != NULL && IS_STRING == Z_TYPE_P(client_ip))
         {
             SEASLOG_G(request_variable)->client_ip_len = spprintf(&SEASLOG_G(request_variable)->client_ip, 0, "%s", Z_STRVAL_P(client_ip));
             SEASLOG_ZVAL_PTR_DTOR(client_ip);
@@ -171,7 +198,7 @@ static int seaslog_init_request_variable(TSRMLS_D)
         }
 
         client_ip = seaslog_request_query(SEASLOG_GLOBAL_VARS_SERVER, ZEND_STRL("REMOTE_ADDR") TSRMLS_CC);
-        if (client_ip != NULL && Z_TYPE_P(client_ip) == IS_STRING)
+        if (client_ip != NULL && IS_STRING == Z_TYPE_P(client_ip))
         {
             SEASLOG_G(request_variable)->client_ip_len = spprintf(&SEASLOG_G(request_variable)->client_ip, 0, "%s", Z_STRVAL_P(client_ip));
             SEASLOG_ZVAL_PTR_DTOR(client_ip);
@@ -186,12 +213,12 @@ static void seaslog_clear_request_variable(TSRMLS_D)
 {
     if(SEASLOG_G(request_variable)->request_uri)
     {
-        SEASLOG_ZVAL_PTR_DTOR(SEASLOG_G(request_variable)->request_uri);
+        efree(SEASLOG_G(request_variable)->request_uri);
     }
 
     if(SEASLOG_G(request_variable)->request_method)
     {
-        SEASLOG_ZVAL_PTR_DTOR(SEASLOG_G(request_variable)->request_method);
+        efree(SEASLOG_G(request_variable)->request_method);
     }
 
     if(SEASLOG_G(request_variable)->domain_port)
@@ -212,6 +239,7 @@ static void get_code_filename_line(smart_str *result TSRMLS_DC)
     const char *ret;
     long code_line = 0;
     size_t filename_len;
+    int recall_depth = SEASLOG_G(recall_depth);
 
 #if PHP_VERSION_ID >= 70000
     zend_string *filename = NULL;
@@ -224,14 +252,20 @@ static void get_code_filename_line(smart_str *result TSRMLS_DC)
     {
         zend_execute_data *ptr = EG(current_execute_data);
 
-        if ((!ptr->func || !ZEND_USER_CODE(ptr->func->common.type)) &&
-                ptr->prev_execute_data->func &&
-                ZEND_USER_CODE(ptr->prev_execute_data->func->common.type)
-           )
+        while(recall_depth >= 0)
         {
-            ptr = ptr->prev_execute_data;
+            if (ptr->prev_execute_data != NULL && ptr->prev_execute_data->func &&
+                    ZEND_USER_CODE(ptr->prev_execute_data->func->common.type)
+               )
+            {
+                ptr = ptr->prev_execute_data;
+            }
+            else
+            {
+                break;
+            }
+            recall_depth--;
         }
-
         if (ptr->func && ZEND_USER_CODE(ptr->func->type))
         {
             ret = ZSTR_VAL(ptr->func->op_array.filename);
@@ -258,6 +292,18 @@ static void get_code_filename_line(smart_str *result TSRMLS_DC)
     else
     {
         zend_execute_data *ptr = EG(current_execute_data);
+        while(recall_depth > 0)
+        {
+            if (ptr->prev_execute_data && ptr->prev_execute_data->opline)
+            {
+                ptr = ptr->prev_execute_data;
+            }
+            else
+            {
+                break;
+            }
+            recall_depth--;
+        }
 
         if (ptr->op_array)
         {
@@ -282,3 +328,4 @@ static void get_code_filename_line(smart_str *result TSRMLS_DC)
 
 #endif
 }
+

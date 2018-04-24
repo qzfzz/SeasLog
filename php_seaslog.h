@@ -81,6 +81,7 @@ PHP_METHOD(SEASLOG_RES_NAME, getDatetimeFormat);
 PHP_METHOD(SEASLOG_RES_NAME, analyzerCount);
 PHP_METHOD(SEASLOG_RES_NAME, analyzerDetail);
 PHP_METHOD(SEASLOG_RES_NAME, getBuffer);
+PHP_METHOD(SEASLOG_RES_NAME, getBufferEnabled);
 PHP_METHOD(SEASLOG_RES_NAME, flushBuffer);
 PHP_METHOD(SEASLOG_RES_NAME, log);
 PHP_METHOD(SEASLOG_RES_NAME, debug);
@@ -111,30 +112,41 @@ ZEND_BEGIN_MODULE_GLOBALS(seaslog)
 
     char *default_template;
     char *current_template;
+    char *slash_or_underline;
 
     logger_entry_t *tmp_logger;
     logger_entry_t *last_logger;
     last_sec_entry_t *last_sec;
     last_min_entry_t *last_min;
 
+    zend_bool disting_folder;
     zend_bool disting_type;
     zend_bool disting_by_hour;
     zend_bool use_buffer;
-    zend_bool trace_error;
-    zend_bool trace_exception;
+    zend_bool buffer_disabled_in_cli;
+    zend_bool enable_buffer_real;
     zend_bool trim_wrap;
     zend_bool throw_exception;
     zend_bool ignore_warning;
+
+    zend_bool trace_notice;
+    zend_bool trace_warning;
+    zend_bool trace_error;
+    zend_bool trace_exception;
 
     int buffer_size;
     int level;
     int buffer_count;
     int initRComplete;
     int error_loop;
+    int recall_depth;
 
     int appender;
+    int appender_retry;
     char *remote_host;
     int remote_port;
+    int remote_timeout;
+    struct timeval remote_timeout_real;
 
     request_variable_t *request_variable;
 

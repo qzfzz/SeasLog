@@ -16,6 +16,8 @@
 
 static int seaslog_real_log_ex(char *message, int message_len, char *opt, int opt_len TSRMLS_DC)
 {
+    size_t written;
+    int retry = SEASLOG_G(appender_retry);
     php_stream *stream = NULL;
 
     stream = process_stream(opt,opt_len TSRMLS_CC);
@@ -25,7 +27,40 @@ static int seaslog_real_log_ex(char *message, int message_len, char *opt, int op
         return FAILURE;
     }
 
-    php_stream_write(stream, message, message_len);
+    written = php_stream_write(stream, message, message_len);
+    if (written != message_len)
+    {
+        if (retry > 0)
+        {
+            while(retry > 0)
+            {
+                written = php_stream_write(stream, message, message_len);
+                if (written == message_len)
+                {
+                    return SUCCESS;
+                }
+                else
+                {
+                    retry--;
+                }
+            }
+        }
+
+        switch SEASLOG_G(appender)
+        {
+        case SEASLOG_APPENDER_TCP:
+            seaslog_throw_exception(SEASLOG_EXCEPTION_LOGGER_ERROR TSRMLS_CC, "SeasLog Can Not Send Data To TCP Server - tcp://%s:%d - %s", SEASLOG_G(remote_host), SEASLOG_G(remote_port), message);
+            break;
+        case SEASLOG_APPENDER_UDP:
+            seaslog_throw_exception(SEASLOG_EXCEPTION_LOGGER_ERROR TSRMLS_CC, "SeasLog Can Not Send Data To UDP Server - udp://%s:%d - %s", SEASLOG_G(remote_host), SEASLOG_G(remote_port), message);
+            break;
+        case SEASLOG_APPENDER_FILE:
+        default:
+            seaslog_throw_exception(SEASLOG_EXCEPTION_LOGGER_ERROR TSRMLS_CC, "SeasLog Can Not Send Data To File - %s - %s", opt, message);
+        }
+
+        return FAILURE;
+    }
 
     return SUCCESS;
 }
@@ -69,17 +104,17 @@ static int seaslog_log_ex(int argc, char *level, int level_int, char *message, i
     {
     case SEASLOG_APPENDER_TCP:
     case SEASLOG_APPENDER_UDP:
-        return appender_handle_tcp_udp(message, message_len, level, logger, ce TSRMLS_CC);
+        return appender_handle_tcp_udp(message, message_len, level, level_int, logger, ce TSRMLS_CC);
         break;
     case SEASLOG_APPENDER_FILE:
     default:
-        return appender_handle_file(message, message_len, level, logger, ce TSRMLS_CC);
+        return appender_handle_file(message, message_len, level, level_int, logger, ce TSRMLS_CC);
     }
 
     return SUCCESS;
 }
 
-static int appender_handle_file(char *message, int message_len, char *level, logger_entry_t *logger, zend_class_entry *ce TSRMLS_DC)
+static int appender_handle_file(char *message, int message_len, char *level, int level_int, logger_entry_t *logger, zend_class_entry *ce TSRMLS_DC)
 {
 
     char *log_file_path, *log_info, *real_date;
@@ -88,14 +123,14 @@ static int appender_handle_file(char *message, int message_len, char *level, log
     real_date = make_real_date(TSRMLS_C);
     if (SEASLOG_G(disting_type))
     {
-        log_file_path_len = spprintf(&log_file_path, 0, "%s/%s.%s.log", logger->logger_path, real_date, level);
+        log_file_path_len = spprintf(&log_file_path, 0, "%s%s%s.%s.log", logger->logger_path, SEASLOG_G(slash_or_underline), real_date, level);
     }
     else
     {
-        log_file_path_len = spprintf(&log_file_path, 0, "%s/%s.log", logger->logger_path,real_date);
+        log_file_path_len = spprintf(&log_file_path, 0, "%s%s%s.log", logger->logger_path, SEASLOG_G(slash_or_underline), real_date);
     }
 
-    log_len = seaslog_spprintf(&log_info TSRMLS_CC, SEASLOG_GENERATE_LOG_INFO, 0, level, message);
+    log_len = seaslog_spprintf(&log_info TSRMLS_CC, SEASLOG_GENERATE_LOG_INFO, level, 0, message);
 
     if (seaslog_real_buffer_log_ex(log_info, log_len, log_file_path, log_file_path_len + 1, ce TSRMLS_CC) == FAILURE)
     {
@@ -110,18 +145,18 @@ static int appender_handle_file(char *message, int message_len, char *level, log
     return SUCCESS;
 }
 
-static int appender_handle_tcp_udp(char *message, int message_len, char *level, logger_entry_t *logger, zend_class_entry *ce TSRMLS_DC)
+static int appender_handle_tcp_udp(char *message, int message_len, char *level, int level_int, logger_entry_t *logger, zend_class_entry *ce TSRMLS_DC)
 {
     char *log_info, *log_content, *time_RFC3339;
-    int log_len, log_content_len;
+    int log_len, log_content_len, PRI;
 
     time_RFC3339 = make_time_RFC3339(TSRMLS_C);
 
-    int PRI = SEASLOG_SYSLOG_FACILITY + seaslog_get_level_int(level);
+    PRI = SEASLOG_SYSLOG_FACILITY + level_int;
 
-    log_content_len = seaslog_spprintf(&log_content TSRMLS_CC, SEASLOG_GENERATE_SYSLOG_INFO, 0, level, message);
+    log_content_len = seaslog_spprintf(&log_content TSRMLS_CC, SEASLOG_GENERATE_SYSLOG_INFO, level, 0, message);
 
-    log_len = spprintf(&log_info, 0, "<%d>1 %s %s %s[%s]: %s", PRI, time_RFC3339, SEASLOG_G(host_name), logger->logger, SEASLOG_G(process_id), log_content);
+    log_len = spprintf(&log_info, 0, "<%d>1 %s %s %s %s %s %s", PRI, time_RFC3339, SEASLOG_G(host_name), SEASLOG_G(request_variable)->domain_port, SEASLOG_G(process_id), logger->logger, log_content);
 
     efree(time_RFC3339);
     efree(log_content);
@@ -136,47 +171,9 @@ static int appender_handle_tcp_udp(char *message, int message_len, char *level, 
     return SUCCESS;
 }
 
-static int check_log_level(int level TSRMLS_DC)
-{
-    if (SEASLOG_G(level) >= SEASLOG_DEBUG_INT) return SUCCESS;
-    if (SEASLOG_G(level) < SEASLOG_EMERGENCY_INT) return FAILURE;
-
-    switch (level)
-    {
-    case SEASLOG_DEBUG_INT:
-        if (SEASLOG_G(level) >= SEASLOG_DEBUG_INT) return SUCCESS;
-        break;
-    case SEASLOG_INFO_INT:
-        if (SEASLOG_G(level) >= SEASLOG_INFO_INT) return SUCCESS;
-        break;
-    case SEASLOG_NOTICE_INT:
-        if (SEASLOG_G(level) >= SEASLOG_NOTICE_INT) return SUCCESS;
-        break;
-    case SEASLOG_WARNING_INT:
-        if (SEASLOG_G(level) >= SEASLOG_WARNING_INT) return SUCCESS;
-        break;
-    case SEASLOG_ERROR_INT:
-        if (SEASLOG_G(level) >= SEASLOG_ERROR_INT) return SUCCESS;
-        break;
-    case SEASLOG_CRITICAL_INT:
-        if (SEASLOG_G(level) >= SEASLOG_CRITICAL_INT) return SUCCESS;
-        break;
-    case SEASLOG_ALERT_INT:
-        if (SEASLOG_G(level) >= SEASLOG_ALERT_INT) return SUCCESS;
-        break;
-    case SEASLOG_EMERGENCY_INT:
-        if (SEASLOG_G(level) >= SEASLOG_EMERGENCY_INT) return SUCCESS;
-        break;
-    default:
-        return FAILURE;
-    }
-
-    return FAILURE;
-}
-
 static int seaslog_real_buffer_log_ex(char *message, int message_len, char *log_file_path, int log_file_path_len, zend_class_entry *ce TSRMLS_DC)
 {
-    if (SEASLOG_G(use_buffer))
+    if (seaslog_check_buffer_enable(TSRMLS_C))
     {
         seaslog_buffer_set(message, message_len, log_file_path, log_file_path_len, ce TSRMLS_CC);
         return SUCCESS;
@@ -189,7 +186,16 @@ static int seaslog_real_buffer_log_ex(char *message, int message_len, char *log_
 
 static int make_log_dir(char *dir TSRMLS_DC)
 {
-    int ret;
+    int ret, dir_len, offset;
+    char *p, *e;
+    char buf[MAXPATHLEN];
+
+#if PHP_VERSION_ID >= 70000
+    zend_stat_t sb;
+#else
+    struct stat sb;
+#endif
+
 
     if (SEASLOG_G(appender) == SEASLOG_APPENDER_FILE)
     {
@@ -203,16 +209,10 @@ static int make_log_dir(char *dir TSRMLS_DC)
             return SUCCESS;
         }
 
-        /* we look for directory separator from the end of string, thus hopefuly reducing our work load */
-        char *p;
-        char *e;
-        SEASLOG_INIT_STAT(sb);
+        dir_len = (int)strlen(dir);
+        offset = 0;
 
-        int dir_len = (int)strlen(dir);
-        int offset = 0;
-        char buf[MAXPATHLEN];
-
-        if (!expand_filepath_with_mode(dir, buf, NULL, 0, CWD_EXPAND TSRMLS_CC))
+        if (!SEASLOG_EXPAND_FILE_PATH(dir, buf))
         {
             seaslog_throw_exception(SEASLOG_EXCEPTION_LOGGER_ERROR TSRMLS_CC, "%s %s", dir, "Invalid path");
             return FAILURE;
@@ -243,6 +243,7 @@ static int make_log_dir(char *dir TSRMLS_DC)
                     --p;
                     *p = '\0';
                 }
+
                 if (VCWD_STAT(buf, &sb) == 0)
                 {
                     while (1)
@@ -306,3 +307,4 @@ static int make_log_dir(char *dir TSRMLS_DC)
         return SUCCESS;
     }
 }
+
